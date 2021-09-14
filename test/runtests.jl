@@ -11,7 +11,6 @@ using Test
 using Documenter: doctest
 doctest(StructArrays)
 
-
 @testset "index" begin
     a, b = [1 2; 3 4], [4 5; 6 7]
     t = StructArray((a = a, b = b))
@@ -877,5 +876,40 @@ end
         u = StructArray(randn(SVector{n, Float64}) for _ in 1:10, _ in 1:5)
         @inferred view(u, :, 1)
         @inferred view(u, 1, :)
+    end
+end
+
+@testset "non-standard layout" begin
+    struct MyType{T, NT<:NamedTuple}
+        data::T
+        rest::NT
+    end
+
+    MyType(x; kwargs...) = MyType(x, values(kwargs))
+
+    function StructArrays.staticschema(::Type{MyType{T, NamedTuple{names, types}}}) where {T, names, types}
+        return NamedTuple{(:data, names...), Base.tuple_type_cons(T, types)}
+    end
+
+    function StructArrays.component(m::MyType, key::Symbol)
+        return key === :data ? getfield(m, 1) : getfield(getfield(m, 2), key)
+    end
+
+    # generate an instance of MyType type
+    function StructArrays.createinstance(::Type{MyType{T, NT}}, x, args...) where {T, NT}
+        return MyType(x, NT(args))
+    end
+
+    s = [MyType(rand(), a=1, b=2) for i in 1:10]
+    S = @inferred StructArray(s)
+    @test S[1] === s[1]
+
+    # Test fallback (non-@generated) variant of _map_params
+    let v = s
+        f(T) = similar(v, T)
+        types = Tuple{Int, Float64, ComplexF32, String}
+        A = @inferred StructArrays._map_params(f, types)
+        B = StructArrays._map_params_recursive(f, types)
+        @test typeof(A) === typeof(B)
     end
 end
